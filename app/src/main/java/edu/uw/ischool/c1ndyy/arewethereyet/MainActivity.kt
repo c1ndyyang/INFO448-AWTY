@@ -6,15 +6,22 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.SystemClock
 import android.telephony.PhoneNumberUtils
+import android.telephony.SmsManager
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import android.Manifest
 
 
 const val ALARM_ACTION = "edu.uw.ischool.newart.ALARM"
@@ -26,6 +33,7 @@ class MainActivity : AppCompatActivity() {
     lateinit var minuteIncr : EditText
     lateinit var startButton : Button
     var receiver : BroadcastReceiver? = null
+    private val smsRequestCode = 123
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,6 +85,7 @@ class MainActivity : AppCompatActivity() {
                 phoneNumber.isEnabled = false;
                 minuteIncr.isEnabled = false;
                 startButton.setText("Stop")
+                Toast.makeText(this, "Messages will begin to start.", Toast.LENGTH_LONG).show()
             } else {
                 stop()
                 textMessage.isEnabled = true;
@@ -84,23 +93,36 @@ class MainActivity : AppCompatActivity() {
                 minuteIncr.isEnabled = true;
                 receiver = null
                 startButton.setText("Start")
+                Toast.makeText(this, "Messages have stopped.", Toast.LENGTH_LONG).show()
             }
         })
     }
 
     fun start() {
         val activityThis = this
-
+        val smsManager = SmsManager.getDefaultSmsSubscriptionId()
         val msg = textMessage.text.toString()
         val phoneInput = phoneNumber.text.toString()
         val minuteTime = minuteIncr.text.toString().toLong() * 1000 * 60
 
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            // Request the permission
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.SEND_SMS), smsRequestCode)
+        } else {
+            // Permission is already granted, proceed with sending SMS
+            sendSms(phoneInput, msg)
+        }
+
         if (receiver == null) {
             receiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {
-                    val phoneFormat = "(${phoneInput.substring(0, 3)}) ${phoneInput.substring(3, 6)}-${phoneInput.substring(6, 10)}"
-                    val toastMsg = "${phoneFormat}: $msg"
-                    Toast.makeText(activityThis, toastMsg, Toast.LENGTH_LONG).show()
+                    //val phoneFormat = "(${phoneInput.substring(0, 3)}) ${phoneInput.substring(3, 6)}-${phoneInput.substring(6, 10)}"
+                    //val toastMsg = "${phoneFormat}: $msg"
+                    //Toast.makeText(activityThis, toastMsg, Toast.LENGTH_LONG).show()
+                    Log.d("ScheduledTask", "Scheduled task executed.")
+                    sendSms(phoneInput, msg)
                 }
             }
             val filter = IntentFilter(ALARM_ACTION)
@@ -110,8 +132,8 @@ class MainActivity : AppCompatActivity() {
 
             val alarmManager : AlarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
             alarmManager.setRepeating(
-                AlarmManager.RTC_WAKEUP,
-                System.currentTimeMillis(),
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime(),
                 minuteTime,
                 pendingIntent
             )
@@ -119,6 +141,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun stop() {
+        if (receiver != null) {
+            unregisterReceiver(receiver)
+            receiver = null
+        }
+
         val intent = Intent(ALARM_ACTION)
         val pendingIntent = PendingIntent.getBroadcast(this, 0, intent, PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
@@ -137,5 +164,35 @@ class MainActivity : AppCompatActivity() {
 
     fun isValidPhoneNumber(phoneNumber: String): Boolean {
         return PhoneNumberUtils.isGlobalPhoneNumber(phoneNumber)
+    }
+
+    private fun sendSms(phoneNumber: String, message: String) {
+        try {
+            val smsManager = SmsManager.getDefault()
+            val sentIntent = Intent("SMS_SENT")
+            val piSent = PendingIntent.getBroadcast(this, 0, sentIntent, PendingIntent.FLAG_UPDATE_CURRENT)
+            smsManager.sendTextMessage(phoneNumber, null, message, piSent, null)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Log.e("SendSMS", "Failed to send message to $phoneNumber: $message")
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            smsRequestCode -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    // Permission granted, proceed with sending SMS
+                    start()
+                } else {
+                    // Permission denied, handle accordingly (e.g., show a message to the user)
+                }
+            }
+        }
     }
 }
